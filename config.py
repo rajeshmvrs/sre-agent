@@ -4,25 +4,36 @@ from dotenv import load_dotenv
 load_dotenv()
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
-if LLM_PROVIDER not in {"anthropic", "openai"}:
-    raise ValueError("LLM_PROVIDER must be either 'anthropic' or 'openai'")
-PROVIDER_API_KEY = f"{LLM_PROVIDER.upper()}_API_KEY"
+if LLM_PROVIDER not in {"anthropic", "openai", "huggingface"}:
+    raise ValueError("LLM_PROVIDER must be 'anthropic', 'openai', or 'huggingface'")
+PROVIDER_API_KEY = (
+    "HF_TOKEN" if LLM_PROVIDER == "huggingface"
+    else f"{LLM_PROVIDER.upper()}_API_KEY"
+)
+HUGGINGFACE_BASE_URL = os.getenv(
+    "HUGGINGFACE_BASE_URL", "https://router.huggingface.co/v1"
+).rstrip("/")
 
 # Keep the existing Anthropic defaults, while allowing every active model role
-# to be overridden independently. The OpenAI defaults preserve the same tiered
-# design: Sol for orchestration and Luna for read-heavy workers / extraction.
+# to be overridden independently. Each provider can use separate orchestration
+# and read-heavy models.
 if LLM_PROVIDER == "openai":
     MODEL_ID = os.getenv("OPENAI_MODEL", "gpt-5.6-sol")
     SUBAGENT_MODEL_ID = os.getenv("OPENAI_SUBAGENT_MODEL", "gpt-5.6-luna")
+elif LLM_PROVIDER == "huggingface":
+    MODEL_ID = os.getenv("HUGGINGFACE_MODEL", "Qwen/Qwen3-4B")
+    SUBAGENT_MODEL_ID = os.getenv(
+        "HUGGINGFACE_SUBAGENT_MODEL", "Qwen/Qwen3-4B"
+    )
 else:
     MODEL_ID = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
     SUBAGENT_MODEL_ID = os.getenv(
         "ANTHROPIC_SUBAGENT_MODEL", "claude-haiku-4-5-20251001"
     )
 
-# Provider-qualified strings are understood by Deep Agents / LangChain. OpenAI
-# models are instantiated explicitly in llm.py so tool-using calls use the
-# Responses API; these strings remain useful for logs and configuration tests.
+# Provider-qualified strings are understood by Deep Agents / LangChain.
+# OpenAI-compatible providers are instantiated explicitly in llm.py so each
+# model uses its configured API endpoint; these strings remain useful for logs.
 MODEL = f"{LLM_PROVIDER}:{MODEL_ID}"
 SUBAGENT_MODEL = f"{LLM_PROVIDER}:{SUBAGENT_MODEL_ID}"
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "")

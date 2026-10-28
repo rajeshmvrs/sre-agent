@@ -41,6 +41,15 @@ def test_openai_uses_tiered_default_models(monkeypatch):
     assert config.SUBAGENT_MODEL == "openai:gpt-5.6-luna"
 
 
+def test_huggingface_uses_open_model_defaults(monkeypatch):
+    config = _reload_config(monkeypatch, "huggingface")
+
+    assert config.MODEL == "huggingface:Qwen/Qwen3-4B"
+    assert config.SUBAGENT_MODEL == "huggingface:Qwen/Qwen3-4B"
+    assert config.PROVIDER_API_KEY == "HF_TOKEN"
+    assert config.HUGGINGFACE_BASE_URL == "https://router.huggingface.co/v1"
+
+
 def test_invalid_provider_is_rejected(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "unknown")
     sys.modules.pop("config", None)
@@ -69,6 +78,32 @@ def test_openai_model_uses_responses_api(monkeypatch):
     assert calls == [{"model": config.MODEL_ID, "use_responses_api": True}]
 
 
+def test_huggingface_model_uses_configured_compatible_endpoint(monkeypatch):
+    config = _reload_config(monkeypatch, "huggingface")
+    monkeypatch.setenv("HUGGINGFACE_BASE_URL", "http://localhost:11434/v1")
+    config.HUGGINGFACE_BASE_URL = "http://localhost:11434/v1"
+    calls = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai",
+        types.SimpleNamespace(ChatOpenAI=FakeChatOpenAI),
+    )
+    sys.modules.pop("llm", None)
+    llm = importlib.import_module("llm")
+
+    assert isinstance(llm.get_main_model(), FakeChatOpenAI)
+    assert calls == [{
+        "model": config.MODEL_ID,
+        "base_url": "http://localhost:11434/v1",
+        "api_key": "local",
+    }]
+
+
 def test_openai_missing_api_key_fails_with_clear_error(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     sys.modules.pop("llm", None)
@@ -88,3 +123,27 @@ def test_openai_configured_api_key_passes_startup_validation(monkeypatch):
     monkeypatch.setattr(llm, "PROVIDER_API_KEY", "OPENAI_API_KEY")
 
     llm.validate_provider_credentials()
+
+
+def test_huggingface_local_endpoint_does_not_require_token(monkeypatch):
+    monkeypatch.setenv("HUGGINGFACE_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    sys.modules.pop("config", None)
+    sys.modules.pop("llm", None)
+    llm = importlib.import_module("llm")
+    monkeypatch.setattr(llm, "LLM_PROVIDER", "huggingface")
+    monkeypatch.setattr(llm, "HUGGINGFACE_BASE_URL", "http://localhost:11434/v1")
+
+    llm.validate_provider_credentials()
+
+
+def test_huggingface_hosted_endpoint_requires_token(monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    sys.modules.pop("llm", None)
+    llm = importlib.import_module("llm")
+    monkeypatch.setattr(llm, "LLM_PROVIDER", "huggingface")
+    monkeypatch.setattr(llm, "HUGGINGFACE_BASE_URL", "https://router.huggingface.co/v1")
+    monkeypatch.setattr(llm, "PROVIDER_API_KEY", "HF_TOKEN")
+
+    with pytest.raises(RuntimeError, match="HF_TOKEN is required"):
+        llm.validate_provider_credentials()

@@ -8,10 +8,10 @@ import api
 import llm
 
 
-@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "huggingface"])
 @pytest.mark.parametrize("value", [None, "", "   "])
 def test_missing_provider_key_fails_before_api_startup(monkeypatch, provider, value):
-    key = f"{provider.upper()}_API_KEY"
+    key = "HF_TOKEN" if provider == "huggingface" else f"{provider.upper()}_API_KEY"
     monkeypatch.setattr(llm, "LLM_PROVIDER", provider)
     monkeypatch.setattr(llm, "PROVIDER_API_KEY", key)
     if value is None:

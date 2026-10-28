@@ -10,7 +10,7 @@ An autonomous Kubernetes SRE agent. It monitors cluster health, diagnoses issues
 - **Fast interactive health checks** — a "run a health check" mention is served by the same bounded path as the scheduler (direct cluster reads + a single structured-output call), so it returns in seconds and can never hit the agent's recursion limit — unlike routing it through the full orchestrator
 - **Custom resource support** — the change-executor can create, update, and delete CRD instances, so it can remove an operator's top-level custom resource (e.g. an `lgps.apps.langchain.ai`) instead of fighting the operator's reconciliation loop
 - **Model gateway support** — route Claude calls through a LangChain/LangSmith model gateway by setting `ANTHROPIC_BASE_URL`; unset, it calls Anthropic directly
-- **Anthropic or OpenAI** — `LLM_PROVIDER` picks the model backend (`anthropic`, the default, or `openai`); model IDs for both the main agent and read-only subagents are independently overridable (see `llm.py`, `config.py`)
+- **Anthropic, OpenAI, or Hugging Face** — `LLM_PROVIDER` picks the model backend; model IDs for both the main agent and read-only subagents are independently overridable (see `llm.py`, `config.py`)
 - **Scheduled monitoring** — periodic cluster health checks on a configurable interval. The scheduler collects cluster state directly via the Kubernetes client (no LLM tokens), then makes a single structured-output call to summarize findings
 - **Structured findings** — health analysis returns a typed `HealthReport` (see `schemas.py`) rather than free text, so Slack rendering reads typed fields instead of parsing markdown
 - **Two interfaces** — CLI for interactive use, FastAPI + web UI for in-cluster deployment
@@ -53,7 +53,7 @@ The main agent only has read tools. All writes are delegated to `change-executor
 
 - Python 3.12+
 - `kubectl` configured and pointing at your cluster (for local dev)
-- Anthropic API key, or an OpenAI API key with `LLM_PROVIDER=openai`
+- An Anthropic/OpenAI API key, or an HF token with `LLM_PROVIDER=huggingface` (a local OpenAI-compatible endpoint needs no token)
 - LangSmith API key (for tracing)
 - Slack app with Bot and App-level tokens (optional, for Slack notifications)
 
@@ -68,11 +68,32 @@ python main.py        # CLI mode
 python api.py         # API + web UI at http://localhost:8080
 ```
 
+### Local open-model testing
+
+Hugging Face inference is the default for `LLM_PROVIDER=huggingface`. For local
+testing, Ollama exposes an OpenAI-compatible endpoint and downloads the model
+locally:
+
+```bash
+ollama pull qwen3:4b
+# In .env:
+LLM_PROVIDER=huggingface
+HUGGINGFACE_BASE_URL=http://localhost:11434/v1
+HUGGINGFACE_MODEL=qwen3:4b
+HUGGINGFACE_SUBAGENT_MODEL=qwen3:4b
+```
+
+Keep Ollama running, then start `python main.py`. Local inference does not
+require `HF_TOKEN`; `LANGSMITH_API_KEY` is still required by the CLI for tracing.
+To use Hugging Face's hosted router instead, leave `HUGGINGFACE_BASE_URL` at its
+default, set `HF_TOKEN`, and choose an available model repository as
+`HUGGINGFACE_MODEL` (for example, `Qwen/Qwen3-4B`).
+
 ### Environment variables
 
 | Variable | Required | Description |
 | -------- | -------- | ----------- |
-| `LLM_PROVIDER` | No | `anthropic` (default) or `openai`. Selects the model backend for the main agent, subagents, and the health-check scheduler |
+| `LLM_PROVIDER` | No | `anthropic` (default), `openai`, or `huggingface`. Selects the model backend for the main agent, subagents, and the health-check scheduler |
 | `ANTHROPIC_API_KEY` | Yes, when `LLM_PROVIDER=anthropic` (the default) | Claude API key. When routing through a gateway (see `ANTHROPIC_BASE_URL`), set this to your gateway key |
 | `ANTHROPIC_MODEL` | No | Main agent model (default: `claude-sonnet-4-6`) |
 | `ANTHROPIC_SUBAGENT_MODEL` | No | Model for read-only subagents and the health-check scheduler (default: `claude-haiku-4-5-20251001`) |
@@ -81,6 +102,10 @@ python api.py         # API + web UI at http://localhost:8080
 | `OPENAI_MODEL` | No | Main agent model when `LLM_PROVIDER=openai` (default: `gpt-5.6-sol`) |
 | `OPENAI_SUBAGENT_MODEL` | No | Subagent/scheduler model when `LLM_PROVIDER=openai` (default: `gpt-5.6-luna`) |
 | `OPENAI_BASE_URL` | No | Optional OpenAI-compatible gateway endpoint; unset = call OpenAI directly |
+| `HF_TOKEN` | Yes, for hosted Hugging Face inference | Hugging Face access token; not needed with a local compatible endpoint |
+| `HUGGINGFACE_MODEL` | No | Main model ID; defaults to `Qwen/Qwen3-4B` |
+| `HUGGINGFACE_SUBAGENT_MODEL` | No | Subagent/scheduler model ID; defaults to `Qwen/Qwen3-4B` |
+| `HUGGINGFACE_BASE_URL` | No | OpenAI-compatible endpoint (default: `https://router.huggingface.co/v1`; Ollama: `http://localhost:11434/v1`) |
 | `LANGSMITH_API_KEY` | Yes | LangSmith tracing key |
 | `LANGSMITH_TRACING` | Yes | Set to `true` to enable tracing |
 | `LANGSMITH_PROJECT` | No | Project name (default: `sre-agent`) |

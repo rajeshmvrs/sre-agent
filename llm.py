@@ -3,7 +3,13 @@ from functools import lru_cache
 import logging
 import os
 
-from config import LLM_PROVIDER, MODEL_ID, PROVIDER_API_KEY, SUBAGENT_MODEL_ID
+from config import (
+    HUGGINGFACE_BASE_URL,
+    LLM_PROVIDER,
+    MODEL_ID,
+    PROVIDER_API_KEY,
+    SUBAGENT_MODEL_ID,
+)
 
 log = logging.getLogger("sre-agent.llm")
 
@@ -14,6 +20,11 @@ class HealthReportTokenLimitError(RuntimeError):
 
 def validate_provider_credentials() -> None:
     """Fail with a clear configuration error before constructing model clients."""
+    if (
+        LLM_PROVIDER == "huggingface"
+        and HUGGINGFACE_BASE_URL != "https://router.huggingface.co/v1"
+    ):
+        return
     key_name = PROVIDER_API_KEY
     if not os.getenv(key_name, "").strip():
         raise RuntimeError(
@@ -27,13 +38,21 @@ def _build_model(model_id: str):
     """Return a configured model for the selected provider.
 
     Anthropic stays as a provider-qualified model string so Deep Agents keeps
-    its existing initialization path. OpenAI is instantiated explicitly to use
-    the Responses API, which supports reasoning and function tools together.
+    its existing initialization path. OpenAI uses the Responses API, while
+    Hugging Face uses the OpenAI-compatible Chat Completions API.
     """
     if LLM_PROVIDER == "openai":
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(model=model_id, use_responses_api=True)
+    if LLM_PROVIDER == "huggingface":
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=model_id,
+            base_url=HUGGINGFACE_BASE_URL,
+            api_key=os.getenv(PROVIDER_API_KEY, "") or "local",
+        )
     return f"anthropic:{model_id}"
 
 
@@ -48,12 +67,14 @@ def get_subagent_model():
 def request_health_report(schema: dict, system: str, user: str):
     """Return an unvalidated report payload for shared validation and repair.
 
-    Pass a JSON schema rather than a Pydantic class to OpenAI so enum drift
-    reaches our repair step instead of raising inside the SDK's model parser.
+    Pass a JSON schema rather than a Pydantic class to OpenAI-compatible
+    providers so enum drift reaches our repair step instead of raising inside
+    the SDK's model parser.
     """
-    if LLM_PROVIDER == "openai":
+    if LLM_PROVIDER in {"openai", "huggingface"}:
+        method = "function_calling" if LLM_PROVIDER == "huggingface" else "json_schema"
         model = get_subagent_model().with_structured_output(
-            schema, method="json_schema",
+            schema, method=method,
         )
         return model.invoke([("system", system), ("user", user)])
 

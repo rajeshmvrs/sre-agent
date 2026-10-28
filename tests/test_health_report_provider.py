@@ -1,4 +1,4 @@
-"""Both providers feed the same report validation and recovery path."""
+"""All providers feed the same report validation and recovery path."""
 import json
 from types import SimpleNamespace
 
@@ -34,6 +34,17 @@ def _mock_provider(monkeypatch, provider, payload):
         model = ChatOpenAI(model="gpt-5.6-luna", api_key="test-placeholder",
                            use_responses_api=True, http_client=client)
         monkeypatch.setattr(llm, "get_subagent_model", lambda: model)
+    elif provider == "huggingface":
+        class FakeModel:
+            def with_structured_output(self, schema, method):
+                calls.append({"schema": schema, "method": method})
+                return self
+
+            def invoke(self, messages):
+                calls[0]["messages"] = messages
+                return payload
+
+        monkeypatch.setattr(llm, "get_subagent_model", FakeModel)
     else:
         import anthropic
         import langsmith.wrappers
@@ -51,7 +62,7 @@ def _mock_provider(monkeypatch, provider, payload):
     return calls
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+@pytest.mark.parametrize("provider", ["anthropic", "openai", "huggingface"])
 @pytest.mark.parametrize("severity, expected", [("critical", "critical"), ("high", "critical")])
 def test_valid_and_repairable_reports_keep_findings(monkeypatch, provider, severity, expected):
     payload = {
@@ -68,12 +79,14 @@ def test_valid_and_repairable_reports_keep_findings(monkeypatch, provider, sever
     assert len(calls) == 1  # Repair must not consume another model call.
     if provider == "openai":
         assert calls[0]["text"]["format"]["type"] == "json_schema"
+    elif provider == "huggingface":
+        assert calls[0]["method"] == "function_calling"
     else:
         assert calls[0]["tool_choice"] == {"type": "tool", "name": "report_health"}
         assert calls[0]["max_tokens"] == 4096
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+@pytest.mark.parametrize("provider", ["anthropic", "openai", "huggingface"])
 @pytest.mark.parametrize("payload", [None, {}, {"refusal": "No"}, {"findings": 42},
     {"findings": [{"unusable": "row"}]}, {"findings": [], "recommended_actions": 42}])
 def test_refusals_and_unusable_reports_degrade_to_warning(monkeypatch, provider, payload):
